@@ -11,6 +11,7 @@
 #   tools/wifi_ops.sh enable             # 走行許可（g1up.sh --enable）
 #   tools/wifi_ops.sh patrol start|pause|stop|status
 #   tools/wifi_ops.sh clear              # FAULT を解除する（自動では解除しない。人が叩く）
+#   tools/wifi_ops.sh clearloop start|stop   # local costmap を 20 秒ごとに消すループ（PC2 で常駐）
 #   tools/wifi_ops.sh hbtest [秒]        # heartbeat の遅れを測る（既定 60 秒）
 #   tools/wifi_ops.sh hb-stop            # このスクリプトが上げた無線 heartbeat を止める
 #
@@ -197,6 +198,36 @@ clear)
     ros_remote "$G1_WIFI_IP" "ros2 service call /g1/clear_fault std_srvs/srv/Trigger {} 2>&1 | tail -2"
     ;;
 
+clearloop)
+    # 2026-09-25 に巡回を1周させた暫定処置（findings/collision_ahead_cause_20260925.md §4）。
+    # 死角の中に消し残りが溜まり `collision ahead` で止まるのを、定期的に消して避ける。
+    # ⚠️⚠️ 消す瞬間は本物の障害物も消える。死角(〜1.6m)の中のものは立ち直らない。人が見ている場でのみ
+    # ssh が切れても続くよう PC2 側で setsid する（ケーブルを抜く前に上げても生き残る）
+    need_ip
+    case "${1:-}" in
+    start)
+        ssh "${SSH_OPTS[@]}" "unitree@$G1_WIFI_IP" '
+            if pgrep -f "clear_entirely_local_cost[m]ap" >/dev/null; then echo "[wifi]   ✅ すでに動いている"; exit 0; fi
+            cd /home/unitree/g1_nav2/pc2_humble && setsid nohup /home/unitree/.pixi/bin/pixi run bash -lc "
+                source /home/unitree/g1_nav2/g1_ws/install/setup.bash
+                export ROS_DOMAIN_ID=0 RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+                export CYCLONEDDS_URI=file:///home/unitree/g1_nav2/cyclonedds_eth0.xml
+                while true; do
+                    ros2 service call /local_costmap/clear_entirely_local_costmap nav2_msgs/srv/ClearEntireCostmap "{}" >/dev/null 2>&1
+                    sleep 20
+                done" >/tmp/costmap_clear.log 2>&1 </dev/null &
+            sleep 2
+            pgrep -f "clear_entirely_local_cost[m]ap" >/dev/null && echo "[wifi]   ✅ costmap 消去ループを開始した（20秒ごと）" \
+                || { echo "[wifi]   ❌ 起動しない（/tmp/costmap_clear.log）"; exit 1; }'
+        ;;
+    stop)
+        ssh "${SSH_OPTS[@]}" "unitree@$G1_WIFI_IP" '
+            pkill -f "clear_entirely_local_cost[m]ap" && echo "[wifi]   ✅ costmap 消去ループを止めた" || echo "[wifi]   動いていない"'
+        ;;
+    *) die "clearloop の引数は start|stop" ;;
+    esac
+    ;;
+
 hbtest)
     need_ip
     SEC="${1:-60}"
@@ -214,7 +245,7 @@ hb-stop)
     ;;
 
 *)
-    sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
     [ -z "$CMD" ] || [ "$CMD" = "-h" ] || [ "$CMD" = "--help" ] || exit 2
     ;;
 esac

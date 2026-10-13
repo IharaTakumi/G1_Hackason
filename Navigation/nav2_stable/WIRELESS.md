@@ -24,14 +24,19 @@ PC2 の CycloneDDS は eth0 固定のまま触らない。
 
 ## 前提（当日の前に済ませておく）
 
-- [ ] ルータの条件: **操作PC と PC2 が同じルータに繋がり、端末同士が通信できる**こと
-      （AP 分離・プライバシーセパレータが無効）。会場のフリーWiFi（`Fujitsu_free_Wi-Fi`）は AP 分離があるので使えない
-- [ ] 5GHz を使う（2.4GHz は 9/29 の実測で遅延が最大 1.4 秒）。Linux の端末は `iw reg get` が JP であること
-- [ ] PC2 をそのルータの WiFi に繋いでおく（有線で入って）:
-      `ssh -t g1 'sudo nmcli device wifi connect <SSID> password <パスワード>'`
+**ルータ**: TP-Link **TL-WR1502X**（AX1500 トラベルルータ。9/29 に用意したもの）の **`Physical_AI_5G`（5GHz）**。
+構成・パスワードの在処・5GHz の設定は `origin/main` の `Common/network/WIFI_ROUTER.md`（このブランチには未取り込み）。
+9/29 時点で G1 Jetson（PC2）は `192.168.0.82`（DHCP なので当日 `wifi_ops.sh ip` で確かめる）。
+
+- [ ] **2.4GHz の `Physical_AI` には繋がない**（9/29 の実測で遅延が最大 1.4 秒）。Linux の操作PC は `iw reg get` が JP であること
+- [ ] ルータの AP 分離（端末同士の通信遮断）が無効であること。会場のフリーWiFi（`Fujitsu_free_Wi-Fi`）は AP 分離があるので使えない
+- [ ] PC2 が `Physical_AI_5G` に繋がっている（9/29 に設定済みのはず）。繋がっていなければ有線で入って:
+      `ssh -t g1 'sudo nmcli device wifi connect Physical_AI_5G password <Slack で確認>'`
 - [ ] 操作PC に `g1_heartbeat_sender` がある（`command -v g1_heartbeat_sender`）
-- [ ] 巡回路の yaml がある（`g1up.sh --patrol` に渡すもの）。**無線では RViz で引けない**ので、
-      有線のうちに `record_waypoints.py` か `patrol_ctl.sh teach` で作っておく
+- [ ] **巡回路**: `config/patrol_room_a.yaml`（6点。**9/25 に room_a で1周完走した版**）を使う。
+      無線中は RViz で引き直せないので、変えるなら有線のうちに
+- [ ] **今回の変更を PC2 へ配置する**（`g1up.sh` に `--tf-timeout` を足した）:
+      `rsync -a deploy/pc2_humble/g1up.sh g1:/home/unitree/g1_nav2/`（[deploy/README.md](deploy/README.md) の手順）
 
 ## 当日の流れ
 
@@ -39,8 +44,15 @@ PC2 の CycloneDDS は eth0 固定のまま触らない。
 
 ### 1. 有線で立ち上げる（いつもどおり）
 
-[safety/runbook_nav2_session.md](safety/runbook_nav2_session.md) / `g1up.sh --patrol <yaml>` で、
-**RViz の目視確認まで**済ませる。有線の heartbeat（`g1_heartbeat_sender --host 192.168.123.164`）も上げておく。
+[safety/runbook_nav2_session.md](safety/runbook_nav2_session.md) のとおり、PC2 で:
+
+```bash
+~/g1_nav2/g1up.sh --tf-timeout 1.0 \
+  --patrol ~/g1_nav2/g1_ws/install/g1_navigation/share/g1_navigation/config/patrol_room_a.yaml
+```
+
+`--tf-timeout 1.0` は 9/25 の巡回1周と同じ値（内蔵SLAM を 1801 で上げ直すと odom が約4Hz に落ち、
+既定 0.5 秒では enable 直後に必ず `tf_stale` FAULT になった）。**RViz の目視確認まで**済ませる。有線の heartbeat（`g1_heartbeat_sender --host 192.168.123.164`）も上げておく。
 **まだ `enable` しない。**
 
 ### 2. 無線の準備（ケーブルはまだ挿したまま）
@@ -51,8 +63,13 @@ tools/wifi_ops.sh ip              # 有線経由で PC2 の wlan0 の IP を表�
 export G1_WIFI_IP=192.168.x.y     # 上で出た IP
 tools/wifi_ops.sh check           # ping / 無線 ssh / 省電力 / DDS が eth0 固定か
 tools/wifi_ops.sh fix             # 省電力が on と出たときだけ（PC2 の sudo パスワードを聞かれる）
+tools/wifi_ops.sh clearloop start # costmap の消し残りを 20 秒ごとに消す（9/25 の1周はこれ込み）
 tools/wifi_ops.sh handover        # heartbeat を有線→無線へ。「ケーブルを抜いてよい」が出るまで待つ
 ```
+
+⚠️ `clearloop` は暫定処置（[findings/collision_ahead_cause_20260925.md](findings/collision_ahead_cause_20260925.md) §4）。
+これが無いと、死角の中に消し残りが溜まって `collision ahead` で止まる。
+**消す瞬間は本物の障害物も消え、死角(〜1.6m)の中のものは立ち直らない。人が見ている場でのみ使う。**
 
 `handover` は、無線の heartbeat を足してから有線の heartbeat を止め、**無線だけで** alive かを確かめる。
 alive にならなければ有線の heartbeat を戻して止まる（READY のうちなので機体には影響しない）。
@@ -79,6 +96,7 @@ tools/wifi_ops.sh patrol pause    # 止める（次の start は同じ点から�
 | ナビを丸ごと止める | `G1_SSH=unitree@$G1_WIFI_IP bash ../real/nav_stop.sh --no-ros` |
 | 巡回だけ止める | `tools/wifi_ops.sh patrol pause` |
 | FAULT から戻す | `tools/wifi_ops.sh clear` → 原因を確かめてから `enable` |
+| 終わったら | `tools/wifi_ops.sh clearloop stop`（`nav_stop.sh` はこのループを止めない） |
 
 通信が途絶えたら、2.0 秒で `operator_lost` → FAULT になって止まる。**自動では再開しない**（人が `clear_fault` を叩く）。
 
