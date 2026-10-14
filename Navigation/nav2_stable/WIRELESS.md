@@ -1,9 +1,8 @@
 # 無線で Nav2 を動かす（当日手順・最短版）
 
-更新: 2026-10-13 / ⚠️ **この手順は実機で未検証**（部品の heartbeat・ssh・`g1up.sh --enable`・`patrol_ctl.sh` は検証済み）
+更新: 2026-10-14 / ✅ **実機で巡回6点を無線で1周した**（room_a、`Physical_AI_5G`。結果は末尾）
 
-**有線で立ち上げてから、ケーブルを抜いて無線で操作する。** 立ち上げ（`g1up.sh`、§7 の照合、RViz の目視）は
-これまでどおり有線で行う。無線化で増える作業は約 10 分。
+**無線で立ち上げ、RViz の確認のときだけ有線ケーブルを挿す。** 歩かせるのは無線だけ。
 
 ## 方針: DDS は無線に通さない
 
@@ -14,101 +13,125 @@
 | 無線に乗るもの | 方式 | 根拠 |
 |---|---|---|
 | heartbeat（操作PC → PC2、5Hz） | UDP。PC2 は全インターフェースで受信 | `g1_sdk_bridge_cpp/src/heartbeat.cpp` の `INADDR_ANY` |
-| 走行許可・巡回の開始停止・状態確認・停止 | ssh で PC2 上の ROS コマンドを叩く | `g1up.sh --enable` / `tools/patrol_ctl.sh` / `Navigation/real/nav_stop.sh` |
+| 起動・走行許可・巡回の開始停止・状態確認・停止 | ssh で PC2 上のコマンドを叩く | `g1up.sh` / `tools/patrol_ctl.sh` / `Navigation/real/nav_stop.sh` |
 
 PC2 の CycloneDDS は eth0 固定のまま触らない。
 
-**代償**: 歩行中は RViz が見られない（状態は `status`、機体は目視）。RViz の「2D Goal Pose」も使えないので、
-**Goal は巡回路（yaml）で与える。** 通信断で止まるまでの時間は 2.0 秒（`g1up.sh` の既定）。
-止まるまでに約 0.6m 進むので、D-31 の受入目標 0.35m は満たせない（[QUESTIONS.md](QUESTIONS.md) Q12 の (b)）。
+**代償**: 無線のあいだは RViz が見られない。位置は `wifi_ops.sh pose` で数値で見る（機体が推定した
+地図上の座標。自己位置がずれても数値は正常に見えるので、目視も併用する）。RViz の「2D Goal Pose」も
+使えないので、**Goal は巡回路（yaml）で与える。** 通信断で止まるまでの時間は 2.0 秒（`g1up.sh` の既定）。
 
-## 前提（当日の前に済ませておく）
+## 前提
 
-**ルータ**: TP-Link **TL-WR1502X**（AX1500 トラベルルータ。9/29 に用意したもの）の **`Physical_AI_5G`（5GHz）**。
-構成・パスワードの在処・5GHz の設定は `origin/main` の `Common/network/WIFI_ROUTER.md`（このブランチには未取り込み）。
-9/29 時点で G1 Jetson（PC2）は `192.168.0.82`（DHCP なので当日 `wifi_ops.sh ip` で確かめる）。
+**ルータ**: TP-Link **TL-WR1502X**（AX1500 トラベルルータ）の **`Physical_AI_5G`（5GHz）**。
+構成・パスワードの在処は `origin/main` の `Common/network/WIFI_ROUTER.md`（このブランチには未取り込み）。
+PC2 は **`192.168.0.82`**（9/29・10/14 とも同じ。DHCP なので `wifi_ops.sh ip` か `ping` で確かめる）。
 
-- [ ] **2.4GHz の `Physical_AI` には繋がない**（9/29 の実測で遅延が最大 1.4 秒）。Linux の操作PC は `iw reg get` が JP であること
-- [ ] ルータの AP 分離（端末同士の通信遮断）が無効であること。会場のフリーWiFi（`Fujitsu_free_Wi-Fi`）は AP 分離があるので使えない
-- [ ] PC2 が `Physical_AI_5G` に繋がっている（9/29 に設定済みのはず）。繋がっていなければ有線で入って:
-      `ssh -t g1 'sudo nmcli device wifi connect Physical_AI_5G password <Slack で確認>'`
+- [ ] 操作PC を `Physical_AI_5G` に繋ぐ（**2.4GHz の `Physical_AI` は使わない**。9/29 の実測で遅延が最大 1.4 秒）
+- [ ] PC2 が `Physical_AI_5G` に繋がっている（10/14 時点で設定済み。WiFi 省電力も off 済み）
 - [ ] 操作PC に `g1_heartbeat_sender` がある（`command -v g1_heartbeat_sender`）
-- [ ] **巡回路**: `config/patrol_room_a.yaml`（6点。**9/25 に room_a で1周完走した版**）を使う。
-      無線中は RViz で引き直せないので、変えるなら有線のうちに
-- [ ] **今回の変更を PC2 へ配置する**（`g1up.sh` に `--tf-timeout` を足した）:
-      `rsync -a deploy/pc2_humble/g1up.sh g1:/home/unitree/g1_nav2/`（[deploy/README.md](deploy/README.md) の手順）
+- [ ] 巡回路は `config/patrol_room_a.yaml`（6点。9/25・10/14 に1周した版）
+- [ ] **発進ゲートが閉じているか先に見る**: `ssh unitree@192.168.0.82 'grep ^G1_ARM /etc/default/g1-sdk-bridge'`
+      → `G1_ARM=`（空）であること。⚠️ **10/14 は前回から開いたまま（`--arm`）になっていた**
 
 ## 当日の流れ
 
 道具はすべて [tools/wifi_ops.sh](tools/wifi_ops.sh)（操作PC で叩く）。
 
-### 1. 有線で立ち上げる（いつもどおり）
-
-[safety/runbook_nav2_session.md](safety/runbook_nav2_session.md) のとおり、PC2 で:
-
-```bash
-~/g1_nav2/g1up.sh --tf-timeout 1.0 \
-  --patrol ~/g1_nav2/g1_ws/install/g1_navigation/share/g1_navigation/config/patrol_room_a.yaml
-```
-
-`--tf-timeout 1.0` は 9/25 の巡回1周と同じ値（内蔵SLAM を 1801 で上げ直すと odom が約4Hz に落ち、
-既定 0.5 秒では enable 直後に必ず `tf_stale` FAULT になった）。**RViz の目視確認まで**済ませる。有線の heartbeat（`g1_heartbeat_sender --host 192.168.123.164`）も上げておく。
-**まだ `enable` しない。**
-
-### 2. 無線の準備（ケーブルはまだ挿したまま）
-
 ```bash
 cd <repo>/Navigation/nav2_stable
-tools/wifi_ops.sh ip              # 有線経由で PC2 の wlan0 の IP を表示
-export G1_WIFI_IP=192.168.x.y     # 上で出た IP
+export G1_WIFI_IP=192.168.0.82
 tools/wifi_ops.sh check           # ping / 無線 ssh / 省電力 / DDS が eth0 固定か
-tools/wifi_ops.sh fix             # 省電力が on と出たときだけ（PC2 の sudo パスワードを聞かれる）
-tools/wifi_ops.sh clearloop start # costmap の消し残りを 20 秒ごとに消す（9/25 の1周はこれ込み）
-tools/wifi_ops.sh handover        # heartbeat を有線→無線へ。「ケーブルを抜いてよい」が出るまで待つ
 ```
 
-⚠️ `clearloop` は暫定処置（[findings/collision_ahead_cause_20260925.md](findings/collision_ahead_cause_20260925.md) §4）。
-これが無いと、死角の中に消し残りが溜まって `collision ahead` で止まる。
-**消す瞬間は本物の障害物も消え、死角(〜1.6m)の中のものは立ち直らない。人が見ている場でのみ使う。**
+### 1. 立ち上げる（無線のまま。機体は動かない）
 
-`handover` は、無線の heartbeat を足してから有線の heartbeat を止め、**無線だけで** alive かを確かめる。
-alive にならなければ有線の heartbeat を戻して止まる（READY のうちなので機体には影響しない）。
-
-### 3. ケーブルを抜いて歩かせる
+機体を出発位置に**通常の立位で**立たせ、人は 2m 以上離れる（吊ったままでは校正できない）。
 
 ```bash
-tools/wifi_ops.sh status          # message: READY / operator_heartbeat: alive を確認
-# 発進ゲートを開く（意図的に自動化していない。g1up.sh の最後に出る ④ の手順）
-tools/wifi_ops.sh enable          # → NAVIGATING になること
-tools/wifi_ops.sh patrol start
-tools/wifi_ops.sh status          # 歩いている間はこれと目視で見る
-tools/wifi_ops.sh pose 60         # 地図上の位置と向きを 60 秒流す（RViz の代わり）
-tools/wifi_ops.sh patrol pause    # 止める（次の start は同じ点から）
+ssh unitree@$G1_WIFI_IP 'cd ~/g1_nav2 && ./g1up.sh --tf-timeout 1.0 --skip-record \
+  --patrol ~/g1_nav2/g1_ws/install/g1_navigation/share/g1_navigation/config/patrol_room_a.yaml'
 ```
 
-発進ゲートを開くには `sudo` が要るので、無線の ssh で入って打つ:
-`ssh -t unitree@$G1_WIFI_IP` → g1up.sh の最後に表示された ④ のコマンド。
+- `--tf-timeout 1.0`: 内蔵SLAM を 1801 で上げ直すと odom が約4Hz に落ち、既定 0.5 秒では enable 直後に
+  `tf_stale` FAULT になる（9/25）
+- ⚠️ **内蔵SLAM が古いまま（吊っていたときなど）だと使い回される。** 16〜26分で止まるので、
+  時間が経っていたら先に `ssh unitree@$G1_WIFI_IP 'cd ~/g1_nav2/tools && python3 send_slam_api.py 1901'`
+  で止めてから g1up.sh を叩く（g1up.sh が 1801 で上げ直す）
+- 照合の一致率が低くても（10/14 は `50cm以内` 44%）、RViz で位置が合っていれば歩けた
 
-### 止める
+### 2. RViz で目視する（ここだけ有線）
+
+LAN ケーブルで G1 と操作PC を繋ぎ:
+
+```bash
+nmcli connection up g1-link
+G1_RMW=rmw_cyclonedds_cpp G1_RVIZ_IFACE=enp3s0 tools/rviz_operate.sh
+```
+
+⚠️ **`G1_RVIZ_IFACE` を必ず付ける**（NIC 名は `ip -br link` で確かめる）。有線と WiFi の両方に繋がった
+操作PC では、付けないと CycloneDDS が WiFi 側を選んで何も映らないことがある。
+
+見るもの: ①位置が実際の立ち位置と合っているか ②**赤軸（前方）が実機の正面と同じ向きか**
+③機体の周りがマゼンタで囲まれていないか。確認したら `tools/rviz_operate.sh stop`、ケーブルを抜く。
+
+### 3. 無線に切り替えて歩かせる
+
+```bash
+tools/wifi_ops.sh clearloop start # costmap の消し残りを 20 秒ごとに消す（9/25・10/14 の1周はこれ込み）
+tools/wifi_ops.sh handover        # 無線だけで heartbeat が alive になるのを確かめる
+```
+
+安全確認（停止係が純正リモコンを持つ／前方 2m 空いている／全員 2m 以上離れる）のあと、
+**発進ゲートを人が開ける**（sudo のパスワードを聞かれる。意図的に自動化していない）:
+
+```bash
+ssh -t unitree@$G1_WIFI_IP "sudo sed -i 's/^G1_ARM=.*/G1_ARM=--arm/' /etc/default/g1-sdk-bridge \
+  && sudo systemctl restart g1-sdk-bridge && sleep 2 && pgrep -af g1_sdk_bridge_real_server"
+# → 末尾に --arm があること
+```
+
+```bash
+tools/wifi_ops.sh enable          # → NAVIGATING
+tools/wifi_ops.sh patrol start
+tools/wifi_ops.sh status          # 巡回の状態（current / loop_count / last_result）
+tools/wifi_ops.sh pose 60         # 地図上の位置と向きを 60 秒流す
+```
+
+⚠️ 巡回は**1周しても止まらず2周目に入る**。止めたいところで `patrol pause`。
+
+⚠️ `clearloop` は暫定処置（[findings/collision_ahead_cause_20260925.md](findings/collision_ahead_cause_20260925.md) §4）。
+**消す瞬間は本物の障害物も消え、死角(〜1.6m)の中のものは立ち直らない。人が見ている場でのみ使う。**
+
+### 止める・撤収する
 
 | 場面 | すること |
 |---|---|
 | まず止めたい | **純正リモコン**（停止係が常に持つ） |
-| ナビを丸ごと止める | `G1_SSH=unitree@$G1_WIFI_IP bash ../real/nav_stop.sh --no-ros` |
-| 巡回だけ止める | `tools/wifi_ops.sh patrol pause` |
+| 巡回だけ止める | `tools/wifi_ops.sh patrol pause`（次の `start` は同じ点から） |
 | FAULT から戻す | `tools/wifi_ops.sh clear` → 原因を確かめてから `enable` |
-| 終わったら | `tools/wifi_ops.sh clearloop stop`（`nav_stop.sh` はこのループを止めない） |
+| 撤収 | `tools/wifi_ops.sh clearloop stop` → `G1_SSH=unitree@$G1_WIFI_IP bash ../real/nav_stop.sh --no-ros` → `tools/wifi_ops.sh hb-stop` |
+| **最後に必ず** | 発進ゲートを閉じる: `ssh -t unitree@$G1_WIFI_IP "sudo sed -i 's/^G1_ARM=.*/G1_ARM=/' /etc/default/g1-sdk-bridge && sudo systemctl restart g1-sdk-bridge"` |
 
-通信が途絶えたら、2.0 秒で `operator_lost` → FAULT になって止まる。**自動では再開しない**（人が `clear_fault` を叩く）。
+`nav_stop.sh` は `clearloop` を止めない。発進ゲートも sudo が要るので閉じられない（コマンドを表示する）。
 
-## 時間に余裕があればやること
+## 実機の結果（2026-10-14、room_a）
 
-- `tools/wifi_ops.sh hbtest 60` で heartbeat の遅れを測る。最大が 0.5 秒未満なら、次回から
-  `g1up.sh --operator-timeout 1.0` で受入目標 0.35m を満たせる（Q12 の (c)）
-- 歩行中に `tools/wifi_ops.sh hb-stop` で heartbeat を止め、FAULT で止まることを確かめる（通信断の試験）
+| 項目 | 結果 |
+|---|---|
+| 巡回 | **6点を無線で1周**（20:27〜20:32、約5分）。失敗・再試行・FAULT・通信断は 0 回 |
+| heartbeat の遅れ（`hbtest 30`、580 サンプル） | 中央 0.10 秒 / **最大 0.24 秒** / 0.5 秒超え 0 回（テザリングは最大 0.63 秒） |
+| 通信断の試験（吊った状態・ゲート閉で実施） | NAVIGATING → `hb-stop` → `operator_lost` で FAULT → `clear` で READY に戻る |
+| 無線経由の `nav_stop.sh` | Nav2・巡回が全部止まる |
+| 出発地点の照合 | `50cm以内` 44%（基準の 80% を下回る）。RViz で位置は正しく、実際に1周できた |
+
+**Q12（通信断で止まるまでの時間）への材料**: 最大 0.24 秒なので、`--operator-timeout 1.0` に戻せば
+受入目標 0.35m を満たせる見込み。ただし測ったのは 30 秒間だけ。次回、巡回中に `hbtest 300` で確かめてから判断する。
+
+**実機で直した不具合**: `wifi_ops.sh` の `clearloop`（自分自身に当たる `pgrep` で「すでに動いている」と誤判定）と
+`pose`（引用符の衝突）。
 
 ## 分かっていないこと
 
-- 当日のルータで UDP（heartbeat）が端末間を通るか → `handover` が確かめる
-- 当日のルータでの heartbeat の遅れ → `hbtest`
-- 機体から離れたとき・壁の陰での電波の強さ
+- 巡回中（歩いている最中）の heartbeat の遅れ。測ったのは立っているときだけ
+- 機体から離れたとき・壁の陰での電波の強さ（room_a の 1 周では問題が出なかった）
