@@ -82,6 +82,7 @@ tools/wifi_ops.sh status          # message: READY / operator_heartbeat: alive �
 tools/wifi_ops.sh enable          # → NAVIGATING になること
 tools/wifi_ops.sh patrol start
 tools/wifi_ops.sh status          # 歩いている間はこれと目視で見る
+tools/wifi_ops.sh pose 60         # 地図上の位置と向きを 60 秒流す（RViz の代わり）
 tools/wifi_ops.sh patrol pause    # 止める（次の start は同じ点から）
 ```
 

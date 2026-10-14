@@ -8,6 +8,7 @@
 #   tools/wifi_ops.sh handover           # heartbeat を有線→無線に切り替え、無線だけで alive か確かめる
 #   （ここでケーブルを抜く）
 #   tools/wifi_ops.sh status             # bridge_status と巡回の状態
+#   tools/wifi_ops.sh pose [秒]          # 地図上の位置と向き（map→base_link）を文字で流す。既定 1 回
 #   tools/wifi_ops.sh enable             # 走行許可（g1up.sh --enable）
 #   tools/wifi_ops.sh patrol start|pause|stop|status
 #   tools/wifi_ops.sh clear              # FAULT を解除する（自動では解除しない。人が叩く）
@@ -179,6 +180,20 @@ status)
     ros_remote "$G1_WIFI_IP" "/home/unitree/g1_nav2/tools/patrol_ctl.sh status 2>&1 | tail -2" | sed 's/^/[wifi]   巡回: /'
     ;;
 
+pose)
+    # 無線では RViz が見られない（DDS を無線に通さない）ので、位置は数値で見る
+    need_ip
+    SEC="${1:-}"
+    if [ -z "$SEC" ]; then
+        ros_remote "$G1_WIFI_IP" "timeout 8 ros2 run tf2_ros tf2_echo map base_link 2>&1 | grep -m2 -E 'Translation|degree'" \
+            | sed 's/^ *- */[wifi]   /'
+    else
+        say "位置を ${SEC} 秒流す（x y [m] / 向き yaw は RPY の3つ目 [度]）"
+        ros_remote "$G1_WIFI_IP" "timeout $SEC ros2 run tf2_ros tf2_echo map base_link 1.0 2>&1 | grep --line-buffered -E 'Translation|degree'" \
+            | sed -u 's/^ *- */[wifi]   /'
+    fi
+    ;;
+
 enable)
     need_ip
     say "走行許可を出す（発進ゲートは開けない。D-07）"
@@ -245,7 +260,7 @@ hb-stop)
     ;;
 
 *)
-    sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'
     [ -z "$CMD" ] || [ "$CMD" = "-h" ] || [ "$CMD" = "--help" ] || exit 2
     ;;
 esac
