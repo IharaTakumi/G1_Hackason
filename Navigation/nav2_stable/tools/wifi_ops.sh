@@ -185,11 +185,11 @@ pose)
     need_ip
     SEC="${1:-}"
     if [ -z "$SEC" ]; then
-        ros_remote "$G1_WIFI_IP" "timeout 8 ros2 run tf2_ros tf2_echo map base_link 2>&1 | grep -m2 -E 'Translation|degree'" \
+        ros_remote "$G1_WIFI_IP" "timeout 8 ros2 run tf2_ros tf2_echo map base_link 2>&1 | grep -m2 -E \"Translation|degree\"" \
             | sed 's/^ *- */[wifi]   /'
     else
         say "位置を ${SEC} 秒流す（x y [m] / 向き yaw は RPY の3つ目 [度]）"
-        ros_remote "$G1_WIFI_IP" "timeout $SEC ros2 run tf2_ros tf2_echo map base_link 1.0 2>&1 | grep --line-buffered -E 'Translation|degree'" \
+        ros_remote "$G1_WIFI_IP" "timeout $SEC ros2 run tf2_ros tf2_echo map base_link 1.0 2>&1 | grep --line-buffered -E \"Translation|degree\"" \
             | sed -u 's/^ *- */[wifi]   /'
     fi
     ;;
@@ -220,24 +220,33 @@ clearloop)
     # ssh が切れても続くよう PC2 側で setsid する（ケーブルを抜く前に上げても生き残る）
     need_ip
     case "${1:-}" in
+    # ⚠️ pgrep -f で探すと、ssh で渡したこのコマンド自身（ループの文字列を含む）に当たって
+    #    「すでに動いている」と誤判定した（2026-10-14 実機）。PID ファイルで管理する
     start)
         ssh "${SSH_OPTS[@]}" "unitree@$G1_WIFI_IP" '
-            if pgrep -f "clear_entirely_local_cost[m]ap" >/dev/null; then echo "[wifi]   ✅ すでに動いている"; exit 0; fi
-            cd /home/unitree/g1_nav2/pc2_humble && setsid nohup /home/unitree/.pixi/bin/pixi run bash -lc "
+            P=/tmp/g1_costmap_clear.pid
+            if [ -f $P ] && kill -0 $(cat $P) 2>/dev/null; then echo "[wifi]   ✅ すでに動いている（pid $(cat $P)）"; exit 0; fi
+            # cd を && で繋ぐと全体がサブシェルになり、$! がループではなくそのシェルを指す
+            cd /home/unitree/g1_nav2/pc2_humble || exit 1
+            setsid nohup /home/unitree/.pixi/bin/pixi run bash -lc "
                 source /home/unitree/g1_nav2/g1_ws/install/setup.bash
                 export ROS_DOMAIN_ID=0 RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
                 export CYCLONEDDS_URI=file:///home/unitree/g1_nav2/cyclonedds_eth0.xml
                 while true; do
-                    ros2 service call /local_costmap/clear_entirely_local_costmap nav2_msgs/srv/ClearEntireCostmap "{}" >/dev/null 2>&1
+                    ros2 service call /local_costmap/clear_entirely_local_costmap nav2_msgs/srv/ClearEntireCostmap \"{}\" >/dev/null 2>&1
                     sleep 20
                 done" >/tmp/costmap_clear.log 2>&1 </dev/null &
+            echo $! > $P
             sleep 2
-            pgrep -f "clear_entirely_local_cost[m]ap" >/dev/null && echo "[wifi]   ✅ costmap 消去ループを開始した（20秒ごと）" \
+            kill -0 $(cat $P) 2>/dev/null && echo "[wifi]   ✅ costmap 消去ループを開始した（20秒ごと、pid $(cat $P)）" \
                 || { echo "[wifi]   ❌ 起動しない（/tmp/costmap_clear.log）"; exit 1; }'
         ;;
     stop)
+        # setsid でプロセスグループの長になっているので、グループごと止める
         ssh "${SSH_OPTS[@]}" "unitree@$G1_WIFI_IP" '
-            pkill -f "clear_entirely_local_cost[m]ap" && echo "[wifi]   ✅ costmap 消去ループを止めた" || echo "[wifi]   動いていない"'
+            P=/tmp/g1_costmap_clear.pid
+            if [ -f $P ] && kill -- -$(cat $P) 2>/dev/null; then echo "[wifi]   ✅ costmap 消去ループを止めた"; else echo "[wifi]   動いていない"; fi
+            rm -f $P'
         ;;
     *) die "clearloop の引数は start|stop" ;;
     esac
