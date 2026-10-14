@@ -24,7 +24,7 @@ PC2 の CycloneDDS は eth0 固定のまま触らない。
 ## 前提
 
 **ルータ**: TP-Link **TL-WR1502X**（AX1500 トラベルルータ）の **`Physical_AI_5G`（5GHz）**。
-構成・パスワードの在処は `origin/main` の `Common/network/WIFI_ROUTER.md`（このブランチには未取り込み）。
+構成・パスワードの在処は [Common/network/WIFI_ROUTER.md](../../Common/network/WIFI_ROUTER.md)。
 PC2 は **`192.168.0.82`**（9/29・10/14 とも同じ。DHCP なので `wifi_ops.sh ip` か `ping` で確かめる）。
 
 - [ ] 操作PC を `Physical_AI_5G` に繋ぐ（**2.4GHz の `Physical_AI` は使わない**。9/29 の実測で遅延が最大 1.4 秒）
