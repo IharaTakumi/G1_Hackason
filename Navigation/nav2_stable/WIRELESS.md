@@ -17,8 +17,9 @@
 
 PC2 の CycloneDDS は eth0 固定のまま触らない。
 
-**代償**: 無線のあいだは RViz が見られない。位置は `wifi_ops.sh pose` で数値で見る（機体が推定した
-地図上の座標。自己位置がずれても数値は正常に見えるので、目視も併用する）。RViz の「2D Goal Pose」も
+**代償**: 無線のあいだは RViz が見られない。代わりに **`wifi_ops.sh mapview start` でブラウザに地図と現在地を出す**
+（[tools/map_web.py](tools/map_web.py)。PC2 の中で ROS を購読し、無線には HTTP だけを流す）。数値なら `wifi_ops.sh pose`。
+どちらも機体が推定した位置なので、自己位置がずれても正常に見える。目視も併用する。RViz の「2D Goal Pose」も
 使えないので、**Goal は巡回路（yaml）で与える。** 通信断で止まるまでの時間は 2.0 秒（`g1up.sh` の既定）。
 
 ## 前提
@@ -31,6 +32,7 @@ PC2 は **`192.168.0.82`**（9/29・10/14 とも同じ。DHCP なので `wifi_op
 - [ ] PC2 が `Physical_AI_5G` に繋がっている（10/14 時点で設定済み。WiFi 省電力も off 済み）
 - [ ] 操作PC に `g1_heartbeat_sender` がある（`command -v g1_heartbeat_sender`）
 - [ ] 巡回路は `config/patrol_room_a.yaml`（6点。9/25・10/14 に1周した版）
+- [ ] PC2 に `tools/map_web.py` を配置済み（10/15 追加。未配置なら有線で `rsync -a tools/ g1:/home/unitree/g1_nav2/tools/`）
 - [ ] **発進ゲートが閉じているか先に見る**: `ssh unitree@192.168.0.82 'grep ^G1_ARM /etc/default/g1-sdk-bridge'`
       → `G1_ARM=`（空）であること。⚠️ **10/14 は前回から開いたまま（`--arm`）になっていた**
 
@@ -80,7 +82,12 @@ G1_RMW=rmw_cyclonedds_cpp G1_RVIZ_IFACE=enp3s0 tools/rviz_operate.sh
 ```bash
 tools/wifi_ops.sh clearloop start # costmap の消し残りを 20 秒ごとに消す（9/25・10/14 の1周はこれ込み）
 tools/wifi_ops.sh handover        # 無線だけで heartbeat が alive になるのを確かめる
+tools/wifi_ops.sh mapview start   # ブラウザで http://192.168.0.82:8090/ を開く（地図・現在地・巡回路）
 ```
+
+地図表示の見かた: 黄の矢印=機体（尖った方が前）、水色=軌跡、緑=計画経路、橙=巡回路（★が次の目標）。
+上の帯に状態（NAVIGATING / FAULT）・巡回の進み・heartbeat。**位置が 2 秒以上更新されないと矢印が赤くなり警告が出る。**
+ドラッグで移動、ホイールで拡大、ダブルクリックで機体の追従に戻る。見るだけで操作はできない。
 
 安全確認（停止係が純正リモコンを持つ／前方 2m 空いている／全員 2m 以上離れる）のあと、
 **発進ゲートを人が開ける**（sudo のパスワードを聞かれる。意図的に自動化していない）:
@@ -110,7 +117,7 @@ tools/wifi_ops.sh pose 60         # 地図上の位置と向きを 60 秒流す
 | まず止めたい | **純正リモコン**（停止係が常に持つ） |
 | 巡回だけ止める | `tools/wifi_ops.sh patrol pause`（次の `start` は同じ点から） |
 | FAULT から戻す | `tools/wifi_ops.sh clear` → 原因を確かめてから `enable` |
-| 撤収 | `tools/wifi_ops.sh clearloop stop` → `G1_SSH=unitree@$G1_WIFI_IP bash ../real/nav_stop.sh --no-ros` → `tools/wifi_ops.sh hb-stop` |
+| 撤収 | `tools/wifi_ops.sh clearloop stop` → `tools/wifi_ops.sh mapview stop` → `G1_SSH=unitree@$G1_WIFI_IP bash ../real/nav_stop.sh --no-ros` → `tools/wifi_ops.sh hb-stop` |
 | **最後に必ず** | 発進ゲートを閉じる: `ssh -t unitree@$G1_WIFI_IP "sudo sed -i 's/^G1_ARM=.*/G1_ARM=/' /etc/default/g1-sdk-bridge && sudo systemctl restart g1-sdk-bridge"` |
 
 `nav_stop.sh` は `clearloop` を止めない。発進ゲートも sudo が要るので閉じられない（コマンドを表示する）。

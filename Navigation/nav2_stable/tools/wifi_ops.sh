@@ -13,6 +13,7 @@
 #   tools/wifi_ops.sh patrol start|pause|stop|status
 #   tools/wifi_ops.sh clear              # FAULT を解除する（自動では解除しない。人が叩く）
 #   tools/wifi_ops.sh clearloop start|stop   # local costmap を 20 秒ごとに消すループ（PC2 で常駐）
+#   tools/wifi_ops.sh mapview start|stop     # 地図上の現在地をブラウザで見る（http://$G1_WIFI_IP:8090/）
 #   tools/wifi_ops.sh hbtest [秒]        # heartbeat の遅れを測る（既定 60 秒）
 #   tools/wifi_ops.sh hb-stop            # このスクリプトが上げた無線 heartbeat を止める
 #
@@ -252,6 +253,38 @@ clearloop)
     esac
     ;;
 
+mapview)
+    # 無線では RViz が使えないので、PC2 で地図に現在地を描いて HTTP で配る（tools/map_web.py）。
+    # ROS の購読は PC2 の中で済み、無線には HTTP だけが流れる（DDS は無線に出ない）
+    need_ip
+    PORT="${G1_MAPVIEW_PORT:-8090}"
+    case "${1:-}" in
+    start)
+        ssh "${SSH_OPTS[@]}" "unitree@$G1_WIFI_IP" "
+            P=/tmp/g1_map_web.pid
+            [ -f /home/unitree/g1_nav2/tools/map_web.py ] || { echo '[wifi]   ❌ PC2 に map_web.py が無い。rsync -a tools/ g1:/home/unitree/g1_nav2/tools/ で配置する'; exit 1; }
+            if [ -f \$P ] && kill -0 \$(cat \$P) 2>/dev/null; then echo '[wifi]   ✅ すでに動いている'; exit 0; fi
+            cd /home/unitree/g1_nav2/pc2_humble || exit 1
+            setsid nohup /home/unitree/.pixi/bin/pixi run bash -lc '
+                source /home/unitree/g1_nav2/g1_ws/install/setup.bash
+                export ROS_DOMAIN_ID=0 RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+                export CYCLONEDDS_URI=file:///home/unitree/g1_nav2/cyclonedds_eth0.xml
+                exec python3 /home/unitree/g1_nav2/tools/map_web.py --port $PORT' >/tmp/map_web.log 2>&1 </dev/null &
+            echo \$! > \$P
+            sleep 4
+            kill -0 \$(cat \$P) 2>/dev/null || { echo '[wifi]   ❌ 起動しない（/tmp/map_web.log）'; tail -5 /tmp/map_web.log; exit 1; }"
+        ok "ブラウザで開く: http://$G1_WIFI_IP:$PORT/"
+        ;;
+    stop)
+        ssh "${SSH_OPTS[@]}" "unitree@$G1_WIFI_IP" '
+            P=/tmp/g1_map_web.pid
+            if [ -f $P ] && kill -- -$(cat $P) 2>/dev/null; then echo "[wifi]   ✅ 地図表示を止めた"; else echo "[wifi]   動いていない"; fi
+            rm -f $P'
+        ;;
+    *) die "mapview の引数は start|stop" ;;
+    esac
+    ;;
+
 hbtest)
     need_ip
     SEC="${1:-60}"
@@ -269,7 +302,7 @@ hb-stop)
     ;;
 
 *)
-    sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
     [ -z "$CMD" ] || [ "$CMD" = "-h" ] || [ "$CMD" = "--help" ] || exit 2
     ;;
 esac
