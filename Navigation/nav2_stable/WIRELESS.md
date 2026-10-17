@@ -19,6 +19,7 @@ PC2 の CycloneDDS は eth0 固定のまま触らない。
 
 **代償**: 無線のあいだは RViz が見られない。代わりに **`wifi_ops.sh mapview start` でブラウザに地図と現在地を出す**
 （[tools/map_web.py](tools/map_web.py)。PC2 の中で ROS を購読し、無線には HTTP だけを流す）。数値なら `wifi_ops.sh pose`。
+作った地図の画像に現在地と通った跡を描き続け、VSCode などで見るなら [tools/live_map/](tools/live_map/README.md)（同じ `state.json` を読む）。
 どちらも機体が推定した位置なので、自己位置がずれても正常に見える。目視も併用する。RViz の「2D Goal Pose」も
 使えないので、**Goal は巡回路（yaml）で与える。** 通信断で止まるまでの時間は 2.0 秒（`g1up.sh` の既定）。
 

@@ -9,7 +9,7 @@ nav2_stable トラックの実機作業で使う道具。**どれも実機を動
 |---|---|---|
 | **操作PC（このPC）の Docker コンテナ内** | このホストに ROS 2 が無い。Mapping のイメージ（Nav2 を追加済み）を使う | `grab_*.py` / `record_odom_events.py` / `watch_builtin_slam.py` / `read_slam_info.py` / `check_imu_attitude.py` / `check_gravity_tf.py` / `g1_slam_odom_tf.py` / `send_goal_watch.py` / `run_nav2_live.sh` / `view_map_rviz.sh` |
 | **PC2（`ssh g1`）の system python3.8** | `unitree_sdk2py` が入っているのはこちら（pixi の 3.11 には入らない） | `send_slam_api.py` / `record_leg_joints.py` |
-| どちらでも（ROS 不要） | numpy/scipy だけで動く | `pointcloud_to_occupancy_grid/` / `match_scan_to_map_2d.py` |
+| どちらでも（ROS 不要） | numpy/scipy だけで動く | `pointcloud_to_occupancy_grid/` / `match_scan_to_map_2d.py` / `live_map/` |
 
 コンテナ内で動かすときの定型（詳細は
 [../findings/g1_dds_sensors.md](../findings/g1_dds_sensors.md) §5）:
@@ -79,6 +79,7 @@ docker run --rm --network host --ipc host \
 | `send_goal_watch.py` | `NavigateToPose` にゴールを送り `/cmd_vel` が出るかを見る |
 | `view_map_rviz.sh` / `view_map.rviz` | 生成した地図を RViz2 で表示する（Linux ホスト用。Mac は Mapping 側の VNC 経路） |
 | `publish_trajectory_path.py` | mapping 軌跡を `nav_msgs/Path` で配信（地図の自由空間に乗っているかの目視確認用） |
+| `live_map/` | **走行中の G1 の位置を、地図の画像（PNG）に 1 秒ごとに描き続ける**（操作 PC、ROS 不要。PC2 の `map_web.py` の `state.json` を読む）。見やすい地図の画像と、見回りの目的地の選択もできる。使い方は [live_map/README.md](live_map/README.md) |
 
 ## 巡回モード（A-10o）
 
